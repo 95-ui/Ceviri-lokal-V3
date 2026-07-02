@@ -98,10 +98,16 @@ export default function ScanTab({
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <button
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => cameraInputRef.current?.click()}
             className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-400"
           >
-            Bild auswählen
+            📷 Foto aufnehmen
+          </button>
+          <button
+            onClick={() => galleryInputRef.current?.click()}
+            className="rounded-lg border border-white/15 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-white/10"
+          >
+            🖼️ Aus Galerie wählen
           </button>
           {imageUrl && (
             <button
@@ -112,7 +118,17 @@ export default function ScanTab({
             </button>
           )}
         </div>
-        <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={onPickFile} className="hidden" />
+        {/* Kamera direkt öffnen */}
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={onPickFile}
+          className="hidden"
+        />
+        {/* Ohne "capture" öffnet Android/iOS die normale Dateiauswahl (Galerie, Dateien, etc.) */}
+        <input ref={galleryInputRef} type="file" accept="image/*" onChange={onPickFile} className="hidden" />
       </section>
 
       {imageUrl && (
