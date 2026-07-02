@@ -1,10 +1,23 @@
 import { useEffect, useState } from "react";
-import { CURATED_MODELS, isModelCached, preloadModel, clearModelCache, type EngineProgress } from "../lib/translate";
+import {
+  getAllModels,
+  isModelCached,
+  preloadModel,
+  clearModelCache,
+  addCustomModel,
+  removeCustomModel,
+  isCuratedModel,
+  type EngineProgress,
+  type ModelDefinition,
+} from "../lib/translate";
 import { OCR_LANGUAGES } from "../lib/langs";
 import { isOcrLangCached, recognizeImage } from "../lib/ocr";
 import { cn } from "../utils/cn";
 
+type Mode = "fixed" | "multilingual";
+
 export default function ModelsTab() {
+  const [models, setModels] = useState<ModelDefinition[]>(getAllModels());
   const [cached, setCached] = useState<Record<string, boolean>>({});
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -12,8 +25,18 @@ export default function ModelsTab() {
   const [ocrCached, setOcrCached] = useState<Record<string, boolean>>({});
   const [ocrLoadingId, setOcrLoadingId] = useState<string | null>(null);
 
-  const refreshCacheStatus = async () => {
-    const entries = await Promise.all(CURATED_MODELS.map(async (m) => [m.repoId, await isModelCached(m.repoId)] as const));
+  // Formular für "Eigenes Modell hinzufügen"
+  const [showForm, setShowForm] = useState(false);
+  const [mode, setMode] = useState<Mode>("fixed");
+  const [repoId, setRepoId] = useState("");
+  const [label, setLabel] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("");
+  const [targetLabel, setTargetLabel] = useState("");
+  const [langsText, setLangsText] = useState("");
+  const [formError, setFormError] = useState("");
+
+  const refreshCacheStatus = async (list: ModelDefinition[]) => {
+    const entries = await Promise.all(list.map(async (m) => [m.repoId, await isModelCached(m.repoId)] as const));
     setCached(Object.fromEntries(entries));
     const ocrEntries = await Promise.all(
       OCR_LANGUAGES.map(async (l) => [l.code, await isOcrLangCached(l.code)] as const),
@@ -21,8 +44,16 @@ export default function ModelsTab() {
     setOcrCached(Object.fromEntries(ocrEntries));
   };
 
+  const refreshAll = () => {
+    const list = getAllModels();
+    setModels(list);
+    refreshCacheStatus(list);
+  };
+
   useEffect(() => {
-    refreshCacheStatus();
+    refreshAll();
+    window.addEventListener("custom-models-changed", refreshAll);
+    return () => window.removeEventListener("custom-models-changed", refreshAll);
   }, []);
 
   const download = async (repoId: string) => {
@@ -33,7 +64,7 @@ export default function ModelsTab() {
       await preloadModel(repoId, (p: EngineProgress) => {
         if (typeof p.progress === "number") setProgress(p.progress);
       });
-      await refreshCacheStatus();
+      await refreshCacheStatus(models);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -46,7 +77,6 @@ export default function ModelsTab() {
     setOcrLoadingId(code);
     setError("");
     try {
-      // 1x1 weißes Pixel reicht, um Tesseract zum Laden der Sprachdaten zu bewegen.
       const canvas = document.createElement("canvas");
       canvas.width = 10;
       canvas.height = 10;
@@ -54,7 +84,7 @@ export default function ModelsTab() {
       ctx.fillStyle = "#fff";
       ctx.fillRect(0, 0, 10, 10);
       await recognizeImage(canvas, [code]);
-      await refreshCacheStatus();
+      await refreshCacheStatus(models);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -64,7 +94,86 @@ export default function ModelsTab() {
 
   const handleClearAll = async () => {
     await clearModelCache();
-    await refreshCacheStatus();
+    await refreshCacheStatus(models);
+  };
+
+  const resetForm = () => {
+    setRepoId("");
+    setLabel("");
+    setSourceLabel("");
+    setTargetLabel("");
+    setLangsText("");
+    setFormError("");
+  };
+
+  const handleAddModel = () => {
+    setFormError("");
+    if (!repoId.trim()) {
+      setFormError("Bitte eine Repo-ID angeben, z.B. Xenova/opus-mt-de-en");
+      return;
+    }
+    if (models.some((m) => m.repoId === repoId.trim())) {
+      setFormError("Ein Modell mit dieser Repo-ID existiert schon.");
+      return;
+    }
+
+    let def: ModelDefinition;
+    if (mode === "fixed") {
+      if (!sourceLabel.trim() || !targetLabel.trim()) {
+        setFormError("Bitte Quell- und Zielsprache angeben (z.B. Deutsch / Türkisch).");
+        return;
+      }
+      def = {
+        repoId: repoId.trim(),
+        label: label.trim() || `${sourceLabel} → ${targetLabel} (eigenes Modell)`,
+        description: "Eigenes hinzugefügtes Modell mit festem Sprachpaar.",
+        multilingual: false,
+        fixedPair: {
+          sourceLabel: sourceLabel.trim(),
+          targetLabel: targetLabel.trim(),
+          sourceCode: "",
+          targetCode: "",
+        },
+        sizeHint: "unbekannt",
+      };
+    } else {
+      // Format: "code:Label, code:Label" z.B. "deu_Latn:Deutsch, tur_Latn:Türkisch"
+      const languages = langsText
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part) => {
+          const [code, ...rest] = part.split(":");
+          return { code: (code ?? "").trim(), label: (rest.join(":") || code).trim() };
+        })
+        .filter((l) => l.code);
+
+      if (languages.length < 2) {
+        setFormError(
+          'Bitte mindestens 2 Sprachen im Format "code:Label" angeben, kommagetrennt, ' +
+            "z.B. deu_Latn:Deutsch, tur_Latn:Türkisch",
+        );
+        return;
+      }
+      def = {
+        repoId: repoId.trim(),
+        label: label.trim() || repoId.trim(),
+        description: "Eigenes hinzugefügtes mehrsprachiges Modell.",
+        multilingual: true,
+        languages,
+        sizeHint: "unbekannt",
+      };
+    }
+
+    addCustomModel(def);
+    resetForm();
+    setShowForm(false);
+  };
+
+  const handleRemove = (id: string) => {
+    if (confirm("Dieses Modell wirklich entfernen? (Bereits heruntergeladene Dateien bleiben im Cache.)")) {
+      removeCustomModel(id);
+    }
   };
 
   return (
@@ -82,11 +191,18 @@ export default function ModelsTab() {
       <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
         <h3 className="mb-3 text-sm font-semibold text-white">Übersetzungsmodelle</h3>
         <div className="space-y-3">
-          {CURATED_MODELS.map((m) => (
+          {models.map((m) => (
             <div key={m.repoId} className="rounded-xl border border-white/10 bg-black/20 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <p className="text-sm font-medium text-white">{m.label}</p>
+                  <p className="text-sm font-medium text-white">
+                    {m.label}
+                    {!isCuratedModel(m.repoId) && (
+                      <span className="ml-2 rounded-full border border-indigo-400/30 bg-indigo-400/10 px-2 py-0.5 text-[10px] text-indigo-300">
+                        eigenes Modell
+                      </span>
+                    )}
+                  </p>
                   <p className="mt-1 text-xs text-slate-400">{m.description}</p>
                   <p className="mt-1 text-xs text-slate-500">Größe: {m.sizeHint}</p>
                 </div>
@@ -107,6 +223,14 @@ export default function ModelsTab() {
                       {loadingId === m.repoId ? `Lädt … ${Math.round(progress)}%` : "Herunterladen"}
                     </button>
                   )}
+                  {!isCuratedModel(m.repoId) && (
+                    <button
+                      onClick={() => handleRemove(m.repoId)}
+                      className="rounded-lg border border-red-400/30 px-3 py-2 text-xs text-red-300 hover:bg-red-400/10"
+                    >
+                      Entfernen
+                    </button>
+                  )}
                 </div>
               </div>
               {loadingId === m.repoId && (
@@ -117,9 +241,114 @@ export default function ModelsTab() {
             </div>
           ))}
         </div>
-        <button onClick={handleClearAll} className="mt-4 text-xs text-red-300 underline">
-          Gesamten Modell-Cache löschen
-        </button>
+
+        <div className="mt-4 flex flex-wrap items-center gap-4">
+          <button onClick={handleClearAll} className="text-xs text-red-300 underline">
+            Gesamten Modell-Cache löschen
+          </button>
+          <button
+            onClick={() => setShowForm((v) => !v)}
+            className="rounded-lg border border-indigo-400/40 px-4 py-2 text-xs font-medium text-indigo-300 hover:bg-indigo-400/10"
+          >
+            {showForm ? "Formular schließen" : "+ Eigenes Modell hinzufügen"}
+          </button>
+        </div>
+
+        {showForm && (
+          <div className="mt-4 space-y-3 rounded-xl border border-indigo-400/30 bg-indigo-400/5 p-4">
+            <p className="text-xs text-slate-400">
+              Trage die Repo-ID eines für <span className="text-white">Transformers.js</span> konvertierten
+              Modells von huggingface.co ein (z.&nbsp;B. <code>Xenova/opus-mt-de-en</code>). Suche auf
+              huggingface.co nach Tag <code>transformers.js</code> + <code>translation</code>, um passende
+              Modelle zu finden.
+            </p>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setMode("fixed")}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs",
+                  mode === "fixed" ? "bg-indigo-500 text-white" : "border border-white/15 text-slate-300",
+                )}
+              >
+                Festes Sprachpaar (z.B. OPUS-MT)
+              </button>
+              <button
+                onClick={() => setMode("multilingual")}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs",
+                  mode === "multilingual" ? "bg-indigo-500 text-white" : "border border-white/15 text-slate-300",
+                )}
+              >
+                Mehrsprachig (z.B. NLLB-Style)
+              </button>
+            </div>
+
+            <div>
+              <label className="text-xs text-slate-400">Repo-ID (Pflicht)</label>
+              <input
+                value={repoId}
+                onChange={(e) => setRepoId(e.target.value)}
+                placeholder="z.B. Xenova/opus-mt-de-en"
+                className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-slate-400">Anzeigename (optional)</label>
+              <input
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="z.B. Deutsch → Türkisch (eigenes Modell)"
+                className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
+              />
+            </div>
+
+            {mode === "fixed" ? (
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-xs text-slate-400">Quellsprache</label>
+                  <input
+                    value={sourceLabel}
+                    onChange={(e) => setSourceLabel(e.target.value)}
+                    placeholder="Deutsch"
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs text-slate-400">Zielsprache</label>
+                  <input
+                    value={targetLabel}
+                    onChange={(e) => setTargetLabel(e.target.value)}
+                    placeholder="Türkisch"
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className="text-xs text-slate-400">
+                  Sprachen im Format <code>code:Label</code>, kommagetrennt
+                </label>
+                <input
+                  value={langsText}
+                  onChange={(e) => setLangsText(e.target.value)}
+                  placeholder="deu_Latn:Deutsch, tur_Latn:Türkisch"
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
+                />
+              </div>
+            )}
+
+            {formError && <p className="text-xs text-red-400">{formError}</p>}
+
+            <button
+              onClick={handleAddModel}
+              className="rounded-lg bg-indigo-500 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-400"
+            >
+              Modell hinzufügen
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
