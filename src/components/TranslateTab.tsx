@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { CURATED_MODELS, splitIntoChunks, translateText, type EngineProgress } from "../lib/translate";
+import { getAllModels, splitIntoChunks, translateText, type EngineProgress } from "../lib/translate";
 import { guessBcp47 } from "../lib/langs";
 import { cn } from "../utils/cn";
+
+const FONT_SIZES = [
+  { cls: "text-sm", label: "Normal" },
+  { cls: "text-base", label: "Groß" },
+  { cls: "text-lg", label: "Größer" },
+  { cls: "text-xl", label: "Sehr groß" },
+  { cls: "text-2xl", label: "Riesig" },
+];
+const FONT_SIZE_KEY = "ceviri_font_size_index";
 
 export default function TranslateTab({
   initialText,
@@ -10,7 +19,8 @@ export default function TranslateTab({
   initialText: string;
   onConsumedInitialText: () => void;
 }) {
-  const [modelId, setModelId] = useState(CURATED_MODELS[0].repoId);
+  const models = useMemo(() => getAllModels(), []);
+  const [modelId, setModelId] = useState(models[0].repoId);
   const [srcLang, setSrcLang] = useState("");
   const [tgtLang, setTgtLang] = useState("");
   const [input, setInput] = useState("");
@@ -18,8 +28,12 @@ export default function TranslateTab({
   const [loading, setLoading] = useState(false);
   const [progressLabel, setProgressLabel] = useState("");
   const [error, setError] = useState("");
+  const [fontSizeIdx, setFontSizeIdx] = useState(() => {
+    const saved = Number(localStorage.getItem(FONT_SIZE_KEY));
+    return Number.isFinite(saved) && saved >= 0 && saved < FONT_SIZES.length ? saved : 0;
+  });
 
-  const model = useMemo(() => CURATED_MODELS.find((m) => m.repoId === modelId)!, [modelId]);
+  const model = useMemo(() => models.find((m) => m.repoId === modelId) ?? models[0], [models, modelId]);
 
   useEffect(() => {
     if (initialText) {
@@ -35,6 +49,14 @@ export default function TranslateTab({
       setTgtLang((prev) => prev || model.languages![1].code);
     }
   }, [model]);
+
+  const changeFontSize = (delta: number) => {
+    setFontSizeIdx((prev) => {
+      const next = Math.min(FONT_SIZES.length - 1, Math.max(0, prev + delta));
+      localStorage.setItem(FONT_SIZE_KEY, String(next));
+      return next;
+    });
+  };
 
   const handleSwap = () => {
     if (model.multilingual) {
@@ -106,7 +128,7 @@ export default function TranslateTab({
           }}
           className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-indigo-400"
         >
-          {CURATED_MODELS.map((m) => (
+          {models.map((m) => (
             <option key={m.repoId} value={m.repoId}>
               {m.label}
             </option>
@@ -159,6 +181,26 @@ export default function TranslateTab({
         )}
       </div>
 
+      <div className="flex items-center justify-end gap-2">
+        <span className="text-xs text-slate-400">Textgröße: {FONT_SIZES[fontSizeIdx].label}</span>
+        <button
+          onClick={() => changeFontSize(-1)}
+          disabled={fontSizeIdx === 0}
+          className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-30"
+          title="Schrift verkleinern"
+        >
+          A−
+        </button>
+        <button
+          onClick={() => changeFontSize(1)}
+          disabled={fontSizeIdx === FONT_SIZES.length - 1}
+          className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-30"
+          title="Schrift vergrößern"
+        >
+          A+
+        </button>
+      </div>
+
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <textarea
@@ -166,14 +208,19 @@ export default function TranslateTab({
             onChange={(e) => setInput(e.target.value)}
             placeholder="Text hier eingeben oder aus dem Scan-Tab übernehmen…"
             rows={8}
-            className="w-full resize-none rounded-lg bg-transparent text-sm text-white placeholder:text-slate-500 outline-none"
+            className={cn(
+              "w-full resize-none rounded-lg bg-transparent text-white placeholder:text-slate-500 outline-none",
+              FONT_SIZES[fontSizeIdx].cls,
+            )}
           />
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
           {loading ? (
             <p className="text-sm text-slate-400">{progressLabel || "Übersetze …"}</p>
           ) : (
-            <p className="whitespace-pre-wrap text-sm text-white">{output || "Übersetzung erscheint hier…"}</p>
+            <p className={cn("whitespace-pre-wrap text-white", FONT_SIZES[fontSizeIdx].cls)}>
+              {output || "Übersetzung erscheint hier…"}
+            </p>
           )}
           {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
         </div>
