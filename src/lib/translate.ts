@@ -109,6 +109,50 @@ export const CURATED_MODELS: ModelDefinition[] = [
   },
 ];
 
+// -----------------------------------------------------------------------
+// Eigene Modelle (vom Nutzer hinzugefügt)
+// -----------------------------------------------------------------------
+// Es werden dabei KEINE Dateien "hochgeladen". Gespeichert wird nur die
+// Repo-ID von huggingface.co - das eigentliche Herunterladen läuft danach
+// exakt so wie bei den kuratierten Modellen oben (einmalig, dann offline
+// gecacht). Voraussetzung: Das Modell muss bereits als ONNX-Version für
+// Transformers.js exportiert sein (erkennbar am Tag "transformers.js" auf
+// der Modellseite, meist im Namensraum "Xenova/" oder "onnx-community/").
+const CUSTOM_MODELS_KEY = "ceviri_custom_models_v1";
+
+export function loadCustomModels(): ModelDefinition[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_MODELS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomModels(models: ModelDefinition[]) {
+  localStorage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(models));
+  window.dispatchEvent(new CustomEvent("custom-models-changed"));
+}
+
+export function addCustomModel(model: ModelDefinition) {
+  const existing = loadCustomModels().filter((m) => m.repoId !== model.repoId);
+  saveCustomModels([...existing, model]);
+}
+
+export function removeCustomModel(repoId: string) {
+  saveCustomModels(loadCustomModels().filter((m) => m.repoId !== repoId));
+}
+
+/** Kuratierte + vom Nutzer hinzugefügte Modelle zusammen. */
+export function getAllModels(): ModelDefinition[] {
+  return [...CURATED_MODELS, ...loadCustomModels()];
+}
+
+export function isCuratedModel(repoId: string): boolean {
+  return CURATED_MODELS.some((m) => m.repoId === repoId);
+}
 const CACHE_NAME = "transformers-cache";
 
 /** Prüft best-effort, ob bereits Dateien dieses Modells lokal zwischengespeichert sind. */
