@@ -16,23 +16,30 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '21'
-          
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
+      # npm ci is deterministic and installs ALL deps (including dev deps
+      # like @capacitor/cli) from package-lock.json.
       - name: Install Dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build Web App (Vite)
         run: npm run build
 
-      - name: Add Android Platform
-        run: npx cap add android
-
-      - name: Copy Web Assets into Android Project
-        run: npx cap copy android
+      # If android/ does not exist yet, add the platform.
+      # If it already exists (because it was committed), just sync instead.
+      - name: Add or Sync Android Platform
+        run: |
+          if [ -d "android" ]; then
+            npx cap sync android
+          else
+            npx cap add android
+            npx cap copy android
+          fi
 
       - name: Build APK
         run: |
