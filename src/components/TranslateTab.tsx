@@ -12,6 +12,25 @@ const FONT_SIZES = [
 ];
 const FONT_SIZE_KEY = "ceviri_font_size_index";
 
+interface LastSelection {
+  modelId: string;
+  srcLang?: string;
+  tgtLang?: string;
+}
+const LAST_SELECTION_KEY = "ceviri_last_selection_v1";
+
+function loadLastSelection(): LastSelection | null {
+  try {
+    const raw = localStorage.getItem(LAST_SELECTION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+function saveLastSelection(sel: LastSelection) {
+  localStorage.setItem(LAST_SELECTION_KEY, JSON.stringify(sel));
+}
+
 export default function TranslateTab({
   initialText,
   onConsumedInitialText,
@@ -20,7 +39,12 @@ export default function TranslateTab({
   onConsumedInitialText: () => void;
 }) {
   const models = useMemo(() => getAllModels(), []);
-  const [modelId, setModelId] = useState(models[0].repoId);
+  const lastSelection = useMemo(() => loadLastSelection(), []);
+
+  const [modelId, setModelId] = useState(() => {
+    const saved = lastSelection?.modelId;
+    return saved && models.some((m) => m.repoId === saved) ? saved : models[0].repoId;
+  });
   const [srcLang, setSrcLang] = useState("");
   const [tgtLang, setTgtLang] = useState("");
   const [input, setInput] = useState("");
@@ -45,10 +69,21 @@ export default function TranslateTab({
 
   useEffect(() => {
     if (model.multilingual && model.languages) {
-      setSrcLang((prev) => prev || model.languages![0].code);
-      setTgtLang((prev) => prev || model.languages![1].code);
+      const useLast = lastSelection?.modelId === model.repoId && lastSelection.srcLang && lastSelection.tgtLang;
+      setSrcLang((prev) => prev || (useLast ? lastSelection!.srcLang! : model.languages![0].code));
+      setTgtLang((prev) => prev || (useLast ? lastSelection!.tgtLang! : model.languages![1].code));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model]);
+
+  // Auswahl bei jeder Änderung merken
+  useEffect(() => {
+    saveLastSelection({
+      modelId,
+      srcLang: model.multilingual ? srcLang : undefined,
+      tgtLang: model.multilingual ? tgtLang : undefined,
+    });
+  }, [modelId, srcLang, tgtLang, model.multilingual]);
 
   const changeFontSize = (delta: number) => {
     setFontSizeIdx((prev) => {
