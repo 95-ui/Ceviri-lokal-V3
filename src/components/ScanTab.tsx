@@ -1,6 +1,16 @@
 import { useRef, useState } from "react";
 import RegionSelector, { type Rect } from "./RegionSelector";
-import { cropImageToCanvas, preprocessCanvas, recognizeImage, PSM_OPTIONS, type OcrProgress, type PsmMode } from "../lib/ocr";
+import {
+  cropImageToCanvas,
+  preprocessCanvas,
+  recognizeImage,
+  recognizeImageScribe,
+  OCR_ENGINES,
+  PSM_OPTIONS,
+  type OcrProgress,
+  type PsmMode,
+  type OcrEngine,
+} from "../lib/ocr";
 import { OCR_LANGUAGES } from "../lib/langs";
 import { cn } from "../utils/cn";
 
@@ -14,9 +24,11 @@ export default function ScanTab({
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [selection, setSelection] = useState<Rect | null>(null);
   const [ocrLangs, setOcrLangs] = useState<string[]>(["deu"]);
+  const [engine, setEngine] = useState<OcrEngine>("tesseract");
   const [busy, setBusy] = useState(false);
+  const [busyEngine, setBusyEngine] = useState<OcrEngine | null>(null);
   const [progress, setProgress] = useState<OcrProgress | null>(null);
-  const [ocrText, setOcrText] = useState("");
+  const [results, setResults] = useState<Partial<Record<OcrEngine, string>>>({});
   const [error, setError] = useState<string | null>(null);
   const [zoomIdx, setZoomIdx] = useState(0);
   const [panMode, setPanMode] = useState(false);
@@ -24,6 +36,7 @@ export default function ScanTab({
   const [psm, setPsm] = useState<PsmMode>("auto");
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+  const lastCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -31,9 +44,10 @@ export default function ScanTab({
     if (imageUrl) URL.revokeObjectURL(imageUrl);
     setImageUrl(URL.createObjectURL(file));
     setSelection(null);
-    setOcrText("");
+    setResults({});
     setError(null);
     setZoomIdx(0);
+    lastCanvasRef.current = null;
     e.target.value = "";
   };
 
@@ -41,8 +55,9 @@ export default function ScanTab({
     if (imageUrl) URL.revokeObjectURL(imageUrl);
     setImageUrl(null);
     setSelection(null);
-    setOcrText("");
+    setResults({});
     setError(null);
+    lastCanvasRef.current = null;
   };
 
   const toggleLang = (code: string) => {
@@ -52,50 +67,96 @@ export default function ScanTab({
     });
   };
 
+  const buildCanvas = async (): Promise<HTMLCanvasElement> => {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error("Bild konnte nicht geladen werden"));
+      i.src = imageUrl!;
+    });
+
+    const sel = selection;
+    const rect = sel
+      ? {
+          x: sel.x * img.naturalWidth,
+          y: sel.y * img.naturalHeight,
+          width: sel.w * img.naturalWidth,
+          height: sel.h * img.naturalHeight,
+        }
+      : { x: 0, y: 0, width: img.naturalWidth, height: img.naturalHeight };
+
+    let canvas = cropImageToCanvas(img, rect);
+    if (preprocess) canvas = preprocessCanvas(canvas);
+    return canvas;
+  };
+
+  const runOcrWith = async (useEngine: OcrEngine, canvas: HTMLCanvasElement) => {
+    if (useEngine === "tesseract") {
+      return recognizeImage(canvas, ocrLangs, setProgress, { psm });
+    }
+    return recognizeImageScribe(canvas, ocrLangs, setProgress);
+  };
+
   const runOcr = async () => {
     if (!imageUrl || busy) return;
     setBusy(true);
+    setBusyEngine(engine);
     setError(null);
-    setOcrText("");
+    setResults({});
     setProgress({ label: "Bild wird vorbereitet …", pct: 0 });
 
     try {
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const i = new Image();
-        i.onload = () => resolve(i);
-        i.onerror = () => reject(new Error("Bild konnte nicht geladen werden"));
-        i.src = imageUrl;
-      });
-
-      const sel = selection;
-      const rect = sel
-        ? {
-            x: sel.x * img.naturalWidth,
-            y: sel.y * img.naturalHeight,
-            width: sel.w * img.naturalWidth,
-            height: sel.h * img.naturalHeight,
-          }
-        : { x: 0, y: 0, width: img.naturalWidth, height: img.naturalHeight };
-
-      let canvas = cropImageToCanvas(img, rect);
-      if (preprocess) canvas = preprocessCanvas(canvas);
-      const text = await recognizeImage(canvas, ocrLangs, setProgress, { psm });
+      const canvas = await buildCanvas();
+      lastCanvasRef.current = canvas;
+      const text = await runOcrWith(engine, canvas);
 
       if (!text) {
         setError("Kein Text erkannt. Versuche einen schärferen Ausschnitt, mehr Licht oder ein anderes Layout unten.");
       } else {
-        setOcrText(text);
+        setResults({ [engine]: text });
         onTextRecognized(text);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+      setBusyEngine(null);
+      setProgress(null);
+    }
+  };
+
+  const runCompare = async () => {
+    if (busy) return;
+    const otherEngine: OcrEngine = engine === "tesseract" ? "scribe" : "tesseract";
+    setBusy(true);
+    setBusyEngine(otherEngine);
+    setError(null);
+    setProgress({ label: "Vergleich wird vorbereitet …", pct: 0 });
+
+    try {
+      // Falls die Auswahl/Zuschnitt seit dem letzten Lauf nicht geändert wurde,
+      // wird dieselbe Bildgrundlage verwendet, damit der Vergleich wirklich fair ist.
+      const canvas = lastCanvasRef.current ?? (await buildCanvas());
+      lastCanvasRef.current = canvas;
+      const text = await runOcrWith(otherEngine, canvas);
+      setResults((prev) => ({ ...prev, [otherEngine]: text || "(kein Text erkannt)" }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+      setBusyEngine(null);
       setProgress(null);
     }
   };
 
   const zoom = ZOOM_STEPS[zoomIdx];
+  const hasBothResults = results.tesseract !== undefined && results.scribe !== undefined;
+  const missingEngine: OcrEngine | null =
+    results.tesseract !== undefined && results.scribe === undefined
+      ? "scribe"
+      : results.scribe !== undefined && results.tesseract === undefined
+        ? "tesseract"
+        : null;
 
   return (
     <div className="space-y-5">
@@ -184,7 +245,13 @@ export default function ScanTab({
               : "Ziehe ein Rechteck über den zu erkennenden Bereich. Eine bestehende Markierung kannst du an den Punkten ziehen, um sie zu vergrößern/verkleinern, oder in der Mitte anfassen, um sie zu verschieben."}
           </p>
           {selection && (
-            <button onClick={() => setSelection(null)} className="text-xs text-indigo-300 underline">
+            <button
+              onClick={() => {
+                setSelection(null);
+                lastCanvasRef.current = null;
+              }}
+              className="text-xs text-indigo-300 underline"
+            >
               Auswahl zurücksetzen
             </button>
           )}
@@ -212,13 +279,35 @@ export default function ScanTab({
             </div>
           </div>
 
+          <div>
+            <p className="mb-2 text-xs text-slate-400">OCR-Engine:</p>
+            <div className="flex flex-wrap gap-2">
+              {OCR_ENGINES.map((e) => (
+                <button
+                  key={e.value}
+                  onClick={() => setEngine(e.value)}
+                  className={cn(
+                    "rounded-xl border px-3 py-2 text-left text-xs",
+                    engine === e.value
+                      ? "border-indigo-400 bg-indigo-400/20 text-indigo-200"
+                      : "border-white/15 text-slate-300 hover:bg-white/10",
+                  )}
+                >
+                  <span className="block font-medium">{e.label}</span>
+                  <span className="block text-slate-400">{e.hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="text-xs text-slate-400">Layout (hilft bei schlecht erkanntem Text)</label>
+              <label className="text-xs text-slate-400">Layout (nur Tesseract.js, hilft bei schlecht erkanntem Text)</label>
               <select
                 value={psm}
                 onChange={(e) => setPsm(e.target.value as PsmMode)}
-                className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none"
+                disabled={engine !== "tesseract"}
+                className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none disabled:opacity-40"
               >
                 {PSM_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -233,16 +322,35 @@ export default function ScanTab({
             </label>
           </div>
 
-          <button
-            onClick={runOcr}
-            disabled={busy}
-            className={cn(
-              "rounded-lg bg-emerald-500 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-400",
-              busy && "cursor-not-allowed opacity-50",
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={runOcr}
+              disabled={busy}
+              className={cn(
+                "rounded-lg bg-emerald-500 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-400",
+                busy && "cursor-not-allowed opacity-50",
+              )}
+            >
+              {busy && busyEngine === engine
+                ? "Scan läuft …"
+                : `Text erkennen mit ${OCR_ENGINES.find((e) => e.value === engine)?.label}`}
+            </button>
+
+            {missingEngine && (
+              <button
+                onClick={runCompare}
+                disabled={busy}
+                className={cn(
+                  "rounded-lg border border-indigo-400/40 px-4 py-2 text-sm text-indigo-300 hover:bg-indigo-400/10",
+                  busy && "cursor-not-allowed opacity-50",
+                )}
+              >
+                {busy && busyEngine === missingEngine
+                  ? "Vergleich läuft …"
+                  : `Mit ${OCR_ENGINES.find((e) => e.value === missingEngine)?.label} vergleichen`}
+              </button>
             )}
-          >
-            {busy ? "Scan läuft …" : "Text erkennen (offline)"}
-          </button>
+          </div>
 
           {progress && (
             <div className="space-y-1">
@@ -262,11 +370,23 @@ export default function ScanTab({
         <p className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-300">{error}</p>
       )}
 
-      {ocrText && (
-        <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-          <h3 className="text-sm font-semibold text-white">Erkannter Text</h3>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-slate-200">{ocrText}</p>
-          <p className="mt-3 text-xs text-indigo-300">→ Wurde automatisch in den „Übersetzen"-Tab übernommen.</p>
+      {(results.tesseract !== undefined || results.scribe !== undefined) && (
+        <section className={cn("grid gap-4", hasBothResults && "md:grid-cols-2")}>
+          {results.tesseract !== undefined && (
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <h3 className="text-sm font-semibold text-white">Ergebnis — Tesseract.js</h3>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-slate-200">{results.tesseract}</p>
+            </div>
+          )}
+          {results.scribe !== undefined && (
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <h3 className="text-sm font-semibold text-white">Ergebnis — Scribe.js</h3>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-slate-200">{results.scribe}</p>
+            </div>
+          )}
+          <p className="text-xs text-indigo-300 md:col-span-2">
+            → Das Ergebnis der zuerst gewählten Engine wurde automatisch in den „Übersetzen"-Tab übernommen.
+          </p>
         </section>
       )}
     </div>
