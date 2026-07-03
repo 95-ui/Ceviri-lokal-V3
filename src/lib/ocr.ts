@@ -38,6 +38,55 @@ export interface OcrProgress {
   pct: number;
 }
 
+export type PsmMode = "auto" | "single_block" | "single_line" | "sparse_text";
+
+const PSM_VALUES: Record<PsmMode, string> = {
+  auto: "3",
+  single_block: "6",
+  single_line: "7",
+  sparse_text: "11",
+};
+
+export const PSM_OPTIONS: { value: PsmMode; label: string }[] = [
+  { value: "auto", label: "Automatisch (Standard)" },
+  { value: "single_block", label: "Einzelner Textblock (z.B. Brief-Absatz)" },
+  { value: "single_line", label: "Einzelne Zeile" },
+  { value: "sparse_text", label: "Verstreuter Text (z.B. Formular, Schild)" },
+];
+
+/** Graustufen + einfache Kontrastspreizung, verbessert oft die Erkennungsrate. */
+export function preprocessCanvas(source: HTMLCanvasElement): HTMLCanvasElement {
+  const w = source.width;
+  const h = source.height;
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const ctx = out.getContext("2d")!;
+  ctx.drawImage(source, 0, 0);
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const data = imageData.data;
+
+  let min = 255;
+  let max = 0;
+  const gray = new Float32Array(w * h);
+  for (let i = 0; i < data.length; i += 4) {
+    const g = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    gray[i / 4] = g;
+    if (g < min) min = g;
+    if (g > max) max = g;
+  }
+  const range = Math.max(1, max - min);
+  for (let i = 0; i < gray.length; i++) {
+    const stretched = ((gray[i] - min) / range) * 255;
+    const idx = i * 4;
+    data[idx] = data[idx + 1] = data[idx + 2] = stretched;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return out;
+}
+
+
+
 /**
  * Prüft (best effort), ob die Sprachdaten für die angegebene(n) Sprache(n)
  * bereits lokal im Browser-/App-Speicher (IndexedDB) zwischengespeichert
@@ -88,6 +137,7 @@ export async function recognizeImage(
   source: HTMLCanvasElement | string,
   langs: string[],
   onProgress?: (p: OcrProgress) => void,
+  options?: { psm?: PsmMode },
 ): Promise<string> {
   const langString = langs.length > 0 ? langs.join("+") : "deu";
 
@@ -116,6 +166,11 @@ export async function recognizeImage(
         (err instanceof Error ? err.message : String(err)) +
         ")",
     );
+  }
+
+  if (options?.psm) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await worker.setParameters({ tessedit_pageseg_mode: PSM_VALUES[options.psm] as any });
   }
 
   try {
