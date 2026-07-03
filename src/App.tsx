@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ScanTab from "./components/ScanTab";
 import TranslateTab from "./components/TranslateTab";
 import ModelsTab from "./components/ModelsTab";
@@ -15,19 +15,40 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: "info", label: "Info", icon: "ℹ️" },
 ];
 
+const NEON_KEY = "ceviri_neon_theme";
+
 export default function App() {
   const [tab, setTab] = useState<TabId>("scan");
   const [pendingText, setPendingText] = useState("");
+  const [neon, setNeon] = useState(() => localStorage.getItem(NEON_KEY) === "1");
+
+  useEffect(() => {
+    localStorage.setItem(NEON_KEY, neon ? "1" : "0");
+  }, [neon]);
 
   return (
-    <div className="min-h-screen bg-[#0a0d13] text-slate-200">
+    <div className={cn("min-h-screen bg-[#0a0d13] text-slate-200", neon && "theme-neon")}>
       <header className="border-b border-white/10 bg-[#0d1119]/80 backdrop-blur">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-4 sm:px-6">
           <div>
             <h1 className="text-lg font-bold text-white">Çeviri Lokal</h1>
             <p className="text-xs text-slate-500">Offline Scan &amp; Übersetzung — Deutsch ⇄ Türkisch</p>
           </div>
-          <OnlineBadge />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setNeon((v) => !v)}
+              className={cn(
+                "rounded-full border px-3 py-1 text-xs",
+                neon
+                  ? "border-fuchsia-400/50 bg-fuchsia-400/10 text-fuchsia-300"
+                  : "border-white/15 text-slate-400 hover:bg-white/10",
+              )}
+              title="Neon-Design ein-/ausschalten"
+            >
+              ✨ Neon {neon ? "an" : "aus"}
+            </button>
+            <OnlineBadge />
+          </div>
         </div>
       </header>
 
