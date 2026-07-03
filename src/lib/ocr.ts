@@ -196,3 +196,72 @@ export function cropImageToCanvas(
   ctx.drawImage(image, rect.x, rect.y, w, h, 0, 0, w, h);
   return canvas;
 }
+export type OcrEngine = "tesseract" | "scribe";
+
+export const OCR_ENGINES: { value: OcrEngine; label: string; hint: string }[] = [
+  { value: "tesseract", label: "Tesseract.js", hint: "Standard, bewährt, schnell" },
+  { value: "scribe", label: "Scribe.js", hint: "Beta – oft genauer bei echten Fotos" },
+];
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let scribeModulePromise: Promise<any> | null = null;
+async function loadScribe() {
+  if (!scribeModulePromise) {
+    scribeModulePromise = import("scribe.js-ocr").then((mod) => mod.default ?? mod);
+  }
+  return scribeModulePromise;
+}
+
+/**
+ * Texterkennung mit Scribe.js (baut auf Tesseract auf, mit verbessertem
+ * Erkennungsmodell + Vorverarbeitung). Beta-Status in dieser App.
+ */
+export async function recognizeImageScribe(
+  source: HTMLCanvasElement,
+  langs: string[],
+  onProgress?: (p: OcrProgress) => void,
+): Promise<string> {
+  onProgress?.({ label: "Scribe.js wird geladen (ggf. einmaliger Download) …", pct: 0.1 });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let scribe: any;
+  try {
+    scribe = await loadScribe();
+  } catch (err) {
+    throw new Error(
+      "Scribe.js konnte nicht geladen werden. Bitte einmal mit dem Internet verbinden. (" +
+        (err instanceof Error ? err.message : String(err)) +
+        ")",
+    );
+  }
+
+  const blob: Blob = await new Promise((resolve, reject) => {
+    source.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("Canvas konnte nicht in ein Bild umgewandelt werden"))),
+      "image/png",
+    );
+  });
+  const file = new File([blob], "scan.png", { type: "image/png" });
+
+  onProgress?.({ label: "Text wird erkannt (Scribe.js) …", pct: 0.5 });
+
+  try {
+    const langList = langs.length > 0 ? langs : ["deu"];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result: any = await scribe.extractText([file], langList, "txt");
+    try {
+      await scribe.terminate?.();
+    } catch {
+      // Aufräumen ist best-effort, ein Fehler hier soll das Ergebnis nicht kaputt machen.
+    }
+    const text = Array.isArray(result) ? result.join("\n") : result;
+    return (text ?? "").toString().trim();
+  } catch (err) {
+    throw new Error(
+      "Scribe.js-Texterkennung fehlgeschlagen: " +
+        (err instanceof Error ? err.message : String(err)) +
+        ". Falls dies beim ersten Versuch mit dieser Sprache passiert: bitte kurz mit dem Internet " +
+        "verbinden (einmaliger Sprachdaten-Download).",
+    );
+  }
+}
