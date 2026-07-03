@@ -1,1 +1,47 @@
 @import "tailwindcss";
+
+.theme-neon .bg-indigo-500 {
+  background-color: #ff2fd0 !important;
+  box-shadow: 0 0 14px #ff2fd0aa;
+}
+.theme-neon .hover\:bg-indigo-400:hover {
+  background-color: #ff6de3 !important;
+}
+.theme-neon .border-indigo-400 {
+  border-color: #00f0ff !important;
+  box-shadow: 0 0 8px #00f0ff88;
+}
+.theme-neon .border-indigo-400\/30 {
+  border-color: #00f0ff66 !important;
+}
+.theme-neon .border-indigo-400\/40 {
+  border-color: #00f0ff88 !important;
+}
+.theme-neon .bg-indigo-400\/10 {
+  background-color: #00f0ff1a !important;
+}
+.theme-neon .bg-indigo-400\/20 {
+  background-color: #00f0ff33 !important;
+}
+.theme-neon .text-indigo-300 {
+  color: #7dfcff !important;
+}
+.theme-neon .text-indigo-200 {
+  color: #baffff !important;
+}
+.theme-neon .bg-emerald-500 {
+  background-color: #39ff14 !important;
+  box-shadow: 0 0 14px #39ff1499;
+}
+.theme-neon .hover\:bg-emerald-400:hover {
+  background-color: #6dff57 !important;
+}
+.theme-neon .border-emerald-400\/30 {
+  border-color: #39ff1466 !important;
+}
+.theme-neon .bg-emerald-400\/10 {
+  background-color: #39ff141a !important;
+}
+.theme-neon .text-emerald-300 {
+  color: #7dffb0 !important;
+}
